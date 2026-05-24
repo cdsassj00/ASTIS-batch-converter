@@ -9,12 +9,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const uploadSection = document.getElementById('uploadSection');
     const resultSection = document.getElementById('resultSection');
     const loadingOverlay = document.getElementById('loadingOverlay');
-    const tableBody = document.getElementById('tableBody');
+    const dynamicTablesContainer = document.getElementById('dynamicTablesContainer');
     
     const resetBtn = document.getElementById('resetBtn');
     const downloadExcelBtn = document.getElementById('downloadExcelBtn');
 
     let currentFiles = [];
+    let serverRawData = []; // 서버에서 받은 원본 데이터 저장용
 
     // Drag & Drop
     ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
@@ -45,7 +46,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function handleFiles(files) {
         if (!files || files.length === 0) return;
         
-        // 누적 업로드 지원
         const newFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
         if(newFiles.length === 0) {
             alert('이미지 파일만 업로드 가능합니다.'); return;
@@ -53,7 +53,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         currentFiles = [...currentFiles, ...newFiles];
         
-        // 갤러리 렌더링
         imageGallery.innerHTML = '';
         currentFiles.forEach(file => {
             const img = document.createElement('img');
@@ -97,7 +96,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
             
             if (response.ok) {
-                renderTable(result.data);
+                serverRawData = result.data;
+                renderDynamicTables(serverRawData);
                 uploadSection.classList.add('hidden');
                 resultSection.classList.remove('hidden');
             } else {
@@ -111,72 +111,129 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // 테이블 렌더링
-    function renderTable(dataArray) {
-        tableBody.innerHTML = ''; // 초기화
-        dataArray.forEach((data, index) => {
-            const tr = document.createElement('tr');
-            
-            // 데이터 매핑용 속성 저장
-            tr.dataset.filename = data._filename || `image_${index}.jpg`;
+    // V5: 다중 양식 테이블 동적 렌더링
+    function renderDynamicTables(dataArray) {
+        dynamicTablesContainer.innerHTML = ''; // 초기화
 
-            // 셀 생성 헬퍼
-            const createCell = (key, value, isCheckbox = false) => {
-                const td = document.createElement('td');
-                const input = document.createElement('input');
-                input.name = key;
-                if(isCheckbox) {
-                    input.type = 'checkbox';
-                    input.checked = value === true;
-                } else {
-                    input.type = 'text';
-                    input.value = value || '';
-                }
-                td.appendChild(input);
-                return td;
-            };
+        // form_type 기준으로 그룹화
+        const groupedData = dataArray.reduce((acc, curr) => {
+            const type = curr.form_type || '분류되지_않은_양식';
+            if (!acc[type]) acc[type] = [];
+            acc[type].push(curr);
+            return acc;
+        }, {});
 
-            // 파일명 셀 (읽기 전용 라벨)
-            const tdFile = document.createElement('td');
-            tdFile.textContent = data._filename;
-            tdFile.style.fontSize = '12px';
-            tdFile.style.color = '#888';
-            tr.appendChild(tdFile);
-
-            tr.appendChild(createCell('company_name', data.company_name));
-            tr.appendChild(createCell('business_number', data.business_number));
-            tr.appendChild(createCell('address', data.address));
-            tr.appendChild(createCell('ceo_name', data.ceo_name));
-            tr.appendChild(createCell('phone', data.phone));
-            tr.appendChild(createCell('mobile', data.mobile));
-            tr.appendChild(createCell('email', data.email));
-            tr.appendChild(createCell('location', data.location));
-            tr.appendChild(createCell('manager_name', data.manager_name));
-            tr.appendChild(createCell('pathology_check', data.pathology_check, true));
-            tr.appendChild(createCell('test_items', data.test_items));
-            tr.appendChild(createCell('change_reason', data.change_reason));
-
-            tableBody.appendChild(tr);
-        });
-    }
-
-    // 일괄 엑셀 다운로드
-    downloadExcelBtn.addEventListener('click', async () => {
-        // 테이블의 각 행을 수집하여 배열로 만듦
-        const rows = document.querySelectorAll('#tableBody tr');
-        const dataArray = [];
-
-        rows.forEach(tr => {
-            const inputs = tr.querySelectorAll('input');
-            const rowData = {};
-            inputs.forEach(input => {
-                if(input.type === 'checkbox') {
-                    rowData[input.name] = input.checked;
-                } else {
-                    rowData[input.name] = input.value;
+        // 그룹(양식)마다 새로운 표를 그린다
+        for (const [formType, records] of Object.entries(groupedData)) {
+            // 그룹에 속한 모든 필드(Key) 추출
+            const allKeys = new Set();
+            records.forEach(r => {
+                if(r.fields) {
+                    Object.keys(r.fields).forEach(k => allKeys.add(k));
                 }
             });
-            dataArray.push(rowData);
+            const columnsArray = Array.from(allKeys);
+
+            // 컨테이너
+            const wrapper = document.createElement('div');
+            wrapper.className = 'table-wrapper';
+            wrapper.style.marginBottom = '40px';
+
+            // 양식 타이틀
+            const title = document.createElement('h3');
+            title.textContent = `📋 양식 그룹: ${formType} (${records.length}건)`;
+            title.style.color = 'var(--primary-color)';
+            title.style.marginBottom = '10px';
+            wrapper.appendChild(title);
+
+            // 테이블 생성
+            const table = document.createElement('table');
+            table.dataset.formType = formType; // 나중에 저장할 때 구분을 위해 저장
+
+            // thead 생성
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            
+            const thFile = document.createElement('th');
+            thFile.textContent = '파일명';
+            headerRow.appendChild(thFile);
+
+            columnsArray.forEach(colName => {
+                const th = document.createElement('th');
+                th.textContent = colName;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            // tbody 생성
+            const tbody = document.createElement('tbody');
+            records.forEach((record, index) => {
+                const tr = document.createElement('tr');
+                tr.dataset.filename = record._filename;
+
+                // 파일명 셀
+                const tdFile = document.createElement('td');
+                tdFile.textContent = record._filename;
+                tdFile.style.fontSize = '12px';
+                tdFile.style.color = '#888';
+                tr.appendChild(tdFile);
+
+                // 데이터 셀들
+                columnsArray.forEach(colName => {
+                    const td = document.createElement('td');
+                    const input = document.createElement('input');
+                    input.name = colName;
+                    
+                    let val = record.fields ? record.fields[colName] : '';
+                    if (typeof val === 'boolean') {
+                        input.type = 'checkbox';
+                        input.checked = val;
+                    } else {
+                        input.type = 'text';
+                        input.value = val || '';
+                    }
+                    td.appendChild(input);
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            wrapper.appendChild(table);
+            dynamicTablesContainer.appendChild(wrapper);
+        }
+    }
+
+    // 일괄 엑셀 다운로드 (동적 멀티 시트 대응)
+    downloadExcelBtn.addEventListener('click', async () => {
+        const finalDataArray = [];
+        
+        // 화면에 있는 모든 테이블(양식 그룹) 순회
+        const tables = document.querySelectorAll('#dynamicTablesContainer table');
+        
+        tables.forEach(table => {
+            const formType = table.dataset.formType;
+            const rows = table.querySelectorAll('tbody tr');
+            
+            rows.forEach(tr => {
+                const filename = tr.dataset.filename;
+                const fields = {};
+                
+                const inputs = tr.querySelectorAll('input');
+                inputs.forEach(input => {
+                    if(input.type === 'checkbox') {
+                        fields[input.name] = input.checked;
+                    } else {
+                        fields[input.name] = input.value;
+                    }
+                });
+
+                finalDataArray.push({
+                    _filename: filename,
+                    form_type: formType,
+                    fields: fields
+                });
+            });
         });
 
         downloadExcelBtn.disabled = true;
@@ -186,7 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/api/export-excel', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(dataArray)
+                body: JSON.stringify(finalDataArray)
             });
 
             if (response.ok) {
@@ -194,7 +251,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = '신청서_대량변환결과.xlsx';
+                a.download = 'ASTIS_분류된_신청서_목록.xlsx';
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
@@ -215,8 +272,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // 리셋
     resetBtn.addEventListener('click', () => {
         currentFiles = [];
+        serverRawData = [];
         fileInput.value = '';
-        tableBody.innerHTML = '';
+        dynamicTablesContainer.innerHTML = '';
         
         resultSection.classList.add('hidden');
         previewArea.classList.add('hidden');
