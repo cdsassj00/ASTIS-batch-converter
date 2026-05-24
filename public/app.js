@@ -35,6 +35,13 @@ document.addEventListener('DOMContentLoaded', () => {
     dropZone.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
 
+    // 화면 어디서든 Ctrl+V (붙여넣기) 지원
+    document.addEventListener('paste', (e) => {
+        if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length > 0) {
+            handleFiles(e.clipboardData.files);
+        }
+    });
+
     function handleFiles(files) {
         if (!files || files.length === 0) return;
         
